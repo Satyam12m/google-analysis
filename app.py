@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 from pytrends.request import TrendReq
 import plotly.express as px
-import country_converter as coco
 import warnings
 
 # Suppress pandas future warnings from pytrends
@@ -102,7 +101,6 @@ with st.sidebar:
 
 # --- FETCH DATA & AUTO-SUGGEST SIMILAR WORDS ---
 is_simulated = False
-# Initial temporary payload just to get smart suggestions if user hasn't typed custom comparison yet
 temp_kw = [main_keyword.strip()]
 
 with st.spinner(f"Analyzing trends and finding similar terms for **{main_keyword}**..."):
@@ -119,7 +117,6 @@ with st.spinner(f"Analyzing trends and finding similar terms for **{main_keyword
             time_df, region_df, auto_related = generate_simulated_data(temp_kw)
             is_simulated = True
 
-# Fallback smart suggestions if API didn't return any
 if not auto_related:
     auto_related = ["Artificial Intelligence", "Data Science", "Cloud Computing"]
 
@@ -128,7 +125,6 @@ with st.sidebar:
     st.subheader("🔄 Comparison Keywords")
     st.markdown("Select suggested similar terms or type your own:")
     
-    # Let user pick from intelligent auto-suggestions
     selected_suggestions = st.multiselect(
         "Auto-suggested similar words:",
         options=auto_related,
@@ -141,13 +137,10 @@ with st.sidebar:
         help="E.g., Python, R, SQL"
     )
 
-# Combine main keyword + selected suggestions + manual custom inputs (limit total to 5 for Google Trends)
 extra_kw = selected_suggestions + [k.strip() for k in custom_comp.split(",") if k.strip()]
-# Remove duplicates and main keyword from comparison list
 unique_extras = list(dict.fromkeys([k for k in extra_kw if k.lower() != main_keyword.lower()]))
 kw_list = [main_keyword.strip()] + unique_extras[:4]
 
-# Fetch full multi-keyword dataset if comparison terms changed
 if len(kw_list) > 1:
     with st.spinner("Fetching comparison data..."):
         if is_simulated:
@@ -197,16 +190,15 @@ with tab1:
     
     map_df = region_df[[main_keyword]].reset_index()
     map_df = map_df[map_df[main_keyword] > 0]
-    map_df['iso_alpha'] = coco.convert(names=map_df['geoName'].tolist(), to='ISO3', not_found=None)
-    map_df = map_df.dropna(subset=['iso_alpha'])
 
     map_col, bar_col = st.columns([3, 2])
     
     with map_col:
+        # Using native Plotly country names mapping to avoid third-party library errors
         fig_map = px.choropleth(
             map_df,
-            locations='iso_alpha',
-            locationmode='ISO-3',
+            locations='geoName',
+            locationmode='country names',
             color=main_keyword,
             hover_name='geoName',
             title=f"World Map: Search Interest for '{main_keyword}'",
