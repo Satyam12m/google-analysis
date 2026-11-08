@@ -18,37 +18,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- AI SUGGESTIONS ENGINE ---
+import requests
+
+# --- AI SUGGESTIONS ENGINE (REST API fallback-proof) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_keyword_suggestions(main_keyword):
-    """Uses Google Gemini to generate contextually relevant comparison keywords."""
+    """Fetches smart keyword suggestions using the direct Gemini REST endpoint."""
     try:
-        # Pull API key from Streamlit secrets or environment
         api_key = st.secrets.get("GEMINI_API_KEY", None)
         if not api_key:
-            # Fallback default suggestions if API key isn't configured yet
-            return [f"{main_keyword} vs alternative", f"best {main_keyword}", f"future of {main_keyword}"]
+            return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
         
-        client = genai.Client(api_key=api_key)
-        prompt = (
-            f"Provide a comma-separated list of 4 highly relevant, popular tech or industry "
-            f"comparison keywords that a data analyst would compare against '{main_keyword}' on Google Trends. "
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+        prompt_text = (
+            f"Provide a comma-separated list of 4 highly relevant comparison keywords "
+            f"that a data analyst would compare against '{main_keyword}' on Google Trends. "
             f"Return ONLY the comma-separated words/phrases, no extra text, numbering, or quotation marks."
         )
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt_text}]
+            }]
+        }
         
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        
-        if response and response.text:
-            suggestions = [s.strip() for s in response.text.split(",") if s.strip()]
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            text_result = data['candidates'][0]['content']['parts'][0]['text']
+            suggestions = [s.strip() for s in text_result.split(",") if s.strip()]
             return suggestions[:4]
-    except Exception as e:
-        st.sidebar.warning(f"AI Suggestion fallback active (Check API Key).")
+    except Exception:
+        pass
     
     return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
-
 # --- HELPER & CACHING FUNCTIONS ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_live_trends(keywords, timeframe, geo):
