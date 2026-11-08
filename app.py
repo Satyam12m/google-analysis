@@ -19,39 +19,40 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- AI SUGGESTIONS ENGINE (Built-in urllib REST endpoint) ---
+from google import genai
+
+# --- AI SUGGESTIONS ENGINE (Official SDK - supports all key formats) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_keyword_suggestions(main_keyword):
-    """Fetches smart keyword suggestions using built-in urllib and Gemini REST endpoint."""
+    """Fetches smart keyword suggestions using the official google-genai SDK."""
     try:
         api_key = st.secrets.get("GEMINI_API_KEY", None)
         if not api_key:
             return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        # Initialize client with your key
+        client = genai.Client(api_key=api_key)
+        
         prompt_text = (
             f"Provide a comma-separated list of 4 highly relevant comparison keywords "
             f"that a data analyst would compare against '{main_keyword}' on Google Trends. "
             f"Return ONLY the comma-separated words/phrases, no extra text, numbering, or quotation marks."
         )
-        payload = json.dumps({
-            "contents": [{
-                "parts": [{"text": prompt_text}]
-            }]
-        }).encode('utf-8')
         
-        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as response:
-            if response.status == 200:
-                data = json.loads(response.read().decode('utf-8'))
-                text_result = data['candidates'][0]['content']['parts'][0]['text']
-                suggestions = [s.strip() for s in text_result.split(",") if s.strip()]
-                return suggestions[:4]
-    except Exception:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt_text,
+        )
+        
+        if response and response.text:
+            suggestions = [s.strip() for s in response.text.split(",") if s.strip()]
+            return suggestions[:4]
+    except Exception as e:
+        # If any error occurs, it falls back gracefully
         pass
     
     return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
-
+    
 # --- HELPER & CACHING FUNCTIONS ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_live_trends(keywords, timeframe, geo):
