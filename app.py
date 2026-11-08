@@ -4,6 +4,7 @@ import numpy as np
 from pytrends.request import TrendReq
 import plotly.express as px
 import warnings
+from google import genai
 
 # Suppress pandas future warnings from pytrends
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -11,11 +12,42 @@ pd.set_option('future.no_silent_downcasting', True)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Google Trends Real-Time Simulator",
+    page_title="AI-Powered Google Trends Tracker",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- AI SUGGESTIONS ENGINE ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_ai_keyword_suggestions(main_keyword):
+    """Uses Google Gemini to generate contextually relevant comparison keywords."""
+    try:
+        # Pull API key from Streamlit secrets or environment
+        api_key = st.secrets.get("GEMINI_API_KEY", None)
+        if not api_key:
+            # Fallback default suggestions if API key isn't configured yet
+            return [f"{main_keyword} vs alternative", f"best {main_keyword}", f"future of {main_keyword}"]
+        
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            f"Provide a comma-separated list of 4 highly relevant, popular tech or industry "
+            f"comparison keywords that a data analyst would compare against '{main_keyword}' on Google Trends. "
+            f"Return ONLY the comma-separated words/phrases, no extra text, numbering, or quotation marks."
+        )
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        
+        if response and response.text:
+            suggestions = [s.strip() for s in response.text.split(",") if s.strip()]
+            return suggestions[:4]
+    except Exception as e:
+        st.sidebar.warning(f"AI Suggestion fallback active (Check API Key).")
+    
+    return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
 
 # --- HELPER & CACHING FUNCTIONS ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -26,21 +58,7 @@ def fetch_live_trends(keywords, timeframe, geo):
     
     time_df = pytrends.interest_over_time()
     region_df = pytrends.interest_by_region(resolution='COUNTRY', inc_low_vol=True, inc_geo_code=False)
-    
-    related_kw = []
-    try:
-        related_queries = pytrends.related_queries()
-        main_kw = keywords[0]
-        if related_queries and main_kw in related_queries:
-            top_df = related_queries[main_kw].get('top')
-            if top_df is not None and not top_df.empty:
-                # Filter out terms that are just variations of the main keyword
-                filtered = [q for q in top_df['query'].tolist() if main_kw.lower() not in q.lower()][:3]
-                related_kw = filtered if filtered else top_df['query'].head(3).tolist()
-    except Exception:
-        pass
-        
-    return time_df, region_df, related_kw
+    return time_df, region_df
 
 def generate_simulated_data(keywords):
     """Fallback generator so your project showcase never crashes due to Google 429 rate limits."""
@@ -66,10 +84,7 @@ def generate_simulated_data(keywords):
     }
     region_df = pd.DataFrame(region_data, index=countries)
     region_df.index.name = 'geoName'
-    
-    main_kw = keywords[0]
-    related_kw = [f"alternative to {main_kw}", f"best {main_kw}", f"{main_kw} 2026"]
-    return time_df, region_df, related_kw
+    return time_df, region_df
 
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
@@ -99,65 +114,54 @@ with st.sidebar:
     
     st.divider()
 
-# --- FETCH DATA & AUTO-SUGGEST SIMILAR WORDS ---
-is_simulated = False
-temp_kw = [main_keyword.strip()]
-
-with st.spinner(f"Analyzing trends and finding similar terms for **{main_keyword}**..."):
-    if st.sidebar.checkbox("⚡ Force Simulator Mode", value=False):
-        time_df, region_df, auto_related = generate_simulated_data(temp_kw)
-        is_simulated = True
-    else:
-        try:
-            time_df, region_df, auto_related = fetch_live_trends(temp_kw, timeframe, geo)
-            if time_df.empty:
-                time_df, region_df, auto_related = generate_simulated_data(temp_kw)
-                is_simulated = True
-        except Exception:
-            time_df, region_df, auto_related = generate_simulated_data(temp_kw)
-            is_simulated = True
-
-if not auto_related:
-    auto_related = ["Artificial Intelligence", "Data Science", "Cloud Computing"]
+# --- FETCH AI SUGGESTIONS ---
+with st.spinner(f"🤖 AI is analyzing context for '{main_keyword}'..."):
+    ai_suggestions = get_ai_keyword_suggestions(main_keyword)
 
 # --- SIDEBAR COMPARISON SECTION ---
 with st.sidebar:
-    st.subheader("🔄 Comparison Keywords")
-    st.markdown("Select suggested similar terms or type your own:")
+    st.subheader("🤖 AI-Suggested Comparisons")
+    st.markdown("Select AI-recommended comparison terms:")
     
     selected_suggestions = st.multiselect(
-        "Auto-suggested similar words:",
-        options=auto_related,
-        default=auto_related[:2] if len(auto_related) >= 2 else auto_related
+        "Suggested words:",
+        options=ai_suggestions,
+        default=ai_suggestions[:2] if len(ai_suggestions) >= 2 else ai_suggestions
     )
     
     custom_comp = st.text_input(
         "Or add custom keywords (comma-separated):", 
         value="",
-        help="E.g., Python, R, SQL"
+        help="E.g., Python, SQL"
     )
 
+# Compile keyword list
 extra_kw = selected_suggestions + [k.strip() for k in custom_comp.split(",") if k.strip()]
 unique_extras = list(dict.fromkeys([k for k in extra_kw if k.lower() != main_keyword.lower()]))
 kw_list = [main_keyword.strip()] + unique_extras[:4]
 
-if len(kw_list) > 1:
-    with st.spinner("Fetching comparison data..."):
-        if is_simulated:
-            time_df, region_df, _ = generate_simulated_data(kw_list)
-        else:
-            try:
-                time_df, region_df, _ = fetch_live_trends(kw_list, timeframe, geo)
-            except Exception:
-                time_df, region_df, _ = generate_simulated_data(kw_list)
+# --- FETCH TREND DATA ---
+is_simulated = False
+with st.spinner(f"Fetching trend data for **{', '.join(kw_list)}**..."):
+    if st.sidebar.checkbox("⚡ Force Simulator Mode", value=False):
+        time_df, region_df = generate_simulated_data(kw_list)
+        is_simulated = True
+    else:
+        try:
+            time_df, region_df = fetch_live_trends(kw_list, timeframe, geo)
+            if time_df.empty:
+                time_df, region_df = generate_simulated_data(kw_list)
                 is_simulated = True
+        except Exception:
+            time_df, region_df = generate_simulated_data(kw_list)
+            is_simulated = True
 
 if 'isPartial' in time_df.columns:
     time_df = time_df.drop(columns=['isPartial'])
 
 # --- MAIN PAGE HEADER ---
-st.title("📈 Real-Time Google Keyword Trend Tracker & Simulator")
-st.markdown("Compare search queries contextually with automated similar-word discovery.")
+st.title("📈 AI-Enhanced Google Keyword Trend Tracker")
+st.markdown("Analyze search behavior using real-time trends blended with generative AI word intelligence.")
 
 # --- KPI METRICS ROW ---
 st.subheader(f"📊 Quick Insights: '{main_keyword}'")
@@ -187,14 +191,12 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader(f"Global Reach for '{main_keyword}'")
     top_regions = region_df[[main_keyword]].sort_values(by=main_keyword, ascending=False).head(15)
-    
     map_df = region_df[[main_keyword]].reset_index()
     map_df = map_df[map_df[main_keyword] > 0]
 
     map_col, bar_col = st.columns([3, 2])
     
     with map_col:
-        # Using native Plotly country names mapping to avoid third-party library errors
         fig_map = px.choropleth(
             map_df,
             locations='geoName',
@@ -279,6 +281,6 @@ with tab4:
         
     with d_col2:
         st.markdown("**Regional Data (Top 50)**")
-        st.dataframe(region_df.sort_values(by=main_keyword, ascending=False).head(50), use_container_width=True, height=300)
+        st.dataframe(region_df.sort_values(by=main_keyword, ascending=False).head(50), service_use=True, use_container_width=True, height=300)
         csv_reg = region_df.to_csv().encode('utf-8')
         st.download_button("⬇️ Download Regional CSV", data=csv_reg, file_name=f"{main_keyword}_regions.csv", mime="text/csv")
