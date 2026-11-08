@@ -1,0 +1,6 @@
+streamlit
+pandas
+numpy
+pytrends
+plotly
+country_converter
