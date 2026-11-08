@@ -19,47 +19,64 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-from google import genai
+# --- GUARDED IMPORT: google-genai SDK ---
+try:
+    from google import genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 
 # --- AI SUGGESTIONS ENGINE (Official SDK - supports all key formats) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_ai_keyword_suggestions(main_keyword):
     """Fetches smart keyword suggestions using the official google-genai SDK."""
+    fallback = [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
+
+    if not GENAI_AVAILABLE:
+        st.sidebar.warning("⚠️ `google-genai` package not installed. Run: `pip install google-genai`")
+        return fallback
+
     try:
-        api_key = st.secrets.get("GEMINI_API_KEY", None)
+        # st.secrets throws FileNotFoundError if .streamlit/secrets.toml doesn't exist,
+        # and KeyError if the key isn't defined — both must be caught explicitly.
+        try:
+            api_key = st.secrets["GEMINI_API_KEY"]
+        except (FileNotFoundError, KeyError):
+            st.sidebar.info("ℹ️ No GEMINI_API_KEY in `.streamlit/secrets.toml`. Using fallback suggestions.")
+            return fallback
+
         if not api_key:
-            return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
-        
+            return fallback
+
         # Initialize client with your key
         client = genai.Client(api_key=api_key)
-        
+
         prompt_text = (
             f"Provide a comma-separated list of 4 highly relevant comparison keywords "
             f"that a data analyst would compare against '{main_keyword}' on Google Trends. "
             f"Return ONLY the comma-separated words/phrases, no extra text, numbering, or quotation marks."
         )
-        
+
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=prompt_text,
         )
-        
+
         if response and response.text:
             suggestions = [s.strip() for s in response.text.split(",") if s.strip()]
             return suggestions[:4]
     except Exception as e:
-        # If any error occurs, it falls back gracefully
-        pass
-    
-    return [f"Alternative to {main_keyword}", f"Top {main_keyword}", f"{main_keyword} trends"]
-    
+        st.sidebar.error(f"⚠️ AI suggestion error: {type(e).__name__}: {e}")
+
+    return fallback
+
 # --- HELPER & CACHING FUNCTIONS ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_live_trends(keywords, timeframe, geo):
     """Fetches real-time data from Google Trends using pytrends."""
     pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 25))
     pytrends.build_payload(keywords, cat=0, timeframe=timeframe, geo=geo, gprop='')
-    
+
     time_df = pytrends.interest_over_time()
     region_df = pytrends.interest_by_region(resolution='COUNTRY', inc_low_vol=True, inc_geo_code=False)
     return time_df, region_df
@@ -68,7 +85,7 @@ def generate_simulated_data(keywords):
     """Fallback generator so your project showcase never crashes due to Google 429 rate limits."""
     dates = pd.date_range(end=pd.Timestamp.today(), periods=52, freq='W')
     np.random.seed(sum(ord(c) for c in keywords[0]))
-    
+
     time_data = {}
     for kw in keywords:
         base = np.linspace(np.random.randint(30, 60), np.random.randint(50, 95), 52)
@@ -76,10 +93,10 @@ def generate_simulated_data(keywords):
         time_data[kw] = np.clip(base + noise, 5, 100).astype(int)
     time_df = pd.DataFrame(time_data, index=dates)
     time_df.index.name = 'date'
-    
+
     countries = [
-        'United States', 'India', 'China', 'United Kingdom', 'Germany', 
-        'Canada', 'Australia', 'Brazil', 'Japan', 'France', 
+        'United States', 'India', 'China', 'United Kingdom', 'Germany',
+        'Canada', 'Australia', 'Brazil', 'Japan', 'France',
         'Singapore', 'South Korea', 'Nigeria', 'Pakistan', 'Philippines',
         'Indonesia', 'Vietnam', 'Mexico', 'Spain', 'Italy'
     ]
@@ -93,9 +110,9 @@ def generate_simulated_data(keywords):
 # --- SIDEBAR CONTROLS ---
 with st.sidebar:
     st.title("⚙️ Tracker Controls")
-    
+
     main_keyword = st.text_input("🔍 Primary Keyword", value="Machine Learning", help="Enter the main topic you want to track.")
-    
+
     timeframe_map = {
         "Past 12 Months": "today 12-m",
         "Past 3 Months": "today 3-m",
@@ -104,7 +121,7 @@ with st.sidebar:
     }
     selected_tf_label = st.selectbox("📅 Timeframe", list(timeframe_map.keys()), index=0)
     timeframe = timeframe_map[selected_tf_label]
-    
+
     geo_map = {
         "Worldwide": "",
         "United States": "US",
@@ -115,7 +132,7 @@ with st.sidebar:
     }
     selected_geo_label = st.selectbox("🌍 Region Filter", list(geo_map.keys()), index=0)
     geo = geo_map[selected_geo_label]
-    
+
     st.divider()
 
 # --- FETCH AI SUGGESTIONS ---
@@ -126,15 +143,15 @@ with st.spinner(f"🤖 AI is analyzing context for '{main_keyword}'..."):
 with st.sidebar:
     st.subheader("🤖 AI-Suggested Comparisons")
     st.markdown("Select AI-recommended comparison terms:")
-    
+
     selected_suggestions = st.multiselect(
         "Suggested words:",
         options=ai_suggestions,
         default=ai_suggestions[:2] if len(ai_suggestions) >= 2 else ai_suggestions
     )
-    
+
     custom_comp = st.text_input(
-        "Or add custom keywords (comma-separated):", 
+        "Or add custom keywords (comma-separated):",
         value="",
         help="E.g., Python, SQL"
     )
@@ -185,9 +202,9 @@ st.divider()
 
 # --- TABS FOR VISUALIZATIONS ---
 tab1, tab2, tab3, tab4 = st.tabs([
-    "🌍 Geographic Distribution", 
-    "📈 Interest Over Time", 
-    "⚔️ Keyword Comparison", 
+    "🌍 Geographic Distribution",
+    "📈 Interest Over Time",
+    "⚔️ Keyword Comparison",
     "📋 Raw Data & Export"
 ])
 
@@ -199,7 +216,7 @@ with tab1:
     map_df = map_df[map_df[main_keyword] > 0]
 
     map_col, bar_col = st.columns([3, 2])
-    
+
     with map_col:
         fig_map = px.choropleth(
             map_df,
@@ -213,7 +230,7 @@ with tab1:
         )
         fig_map.update_layout(margin=dict(l=0, r=0, t=40, b=0), height=450)
         st.plotly_chart(fig_map, use_container_width=True)
-        
+
     with bar_col:
         fig_bar = px.bar(
             top_regions.reset_index(),
@@ -256,14 +273,14 @@ with tab3:
         )
         fig_comp.update_layout(hovermode="x unified", height=450)
         st.plotly_chart(fig_comp, use_container_width=True)
-        
+
         st.markdown("#### Average Interest Share")
         avg_df = time_df[kw_list].mean().reset_index()
         avg_df.columns = ['Keyword', 'Average Interest']
         fig_avg = px.bar(
-            avg_df, 
-            x='Keyword', 
-            y='Average Interest', 
+            avg_df,
+            x='Keyword',
+            y='Average Interest',
             color='Keyword',
             text_auto='.1f'
         )
@@ -276,13 +293,13 @@ with tab3:
 with tab4:
     st.subheader("Inspect & Download Data")
     d_col1, d_col2 = st.columns(2)
-    
+
     with d_col1:
         st.markdown("**Time Series Data**")
         st.dataframe(time_df.sort_index(ascending=False), use_container_width=True, height=300)
         csv_time = time_df.to_csv().encode('utf-8')
         st.download_button("⬇️ Download Timeline CSV", data=csv_time, file_name=f"{main_keyword}_timeline.csv", mime="text/csv")
-        
+
     with d_col2:
         st.markdown("**Regional Data (Top 50)**")
         st.dataframe(region_df.sort_values(by=main_keyword, ascending=False).head(50), use_container_width=True, height=300)
