@@ -1,6 +1,6 @@
-streamlit
-pandas
-numpy
-pytrends
-plotly
-country_converter
+streamlit>=1.25.0
+pandas>=2.0.0
+numpy>=1.24.0
+pytrends==4.9.2
+plotly>=5.15.0
+country_converter>=1.2.0
